@@ -15,6 +15,7 @@ from isodate import duration_isoformat
 from opaque_keys.edx.keys import CourseKey
 from openedx.core.djangoapps.content.course_overviews.api import get_course_overviews
 from openedx.core.djangoapps.external_user_ids.models import ExternalId, ExternalIdType
+from common.djangoapps.student.models import anonymous_id_for_user
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -58,7 +59,11 @@ def get_anonymous_user_id(username_or_id):
         if not external_id:
             raise ValueError("External ID type: %s does not exist" % type_name)
 
-        anonymous_id = str(external_id.external_user_id)
+        ## CampusIL change
+        #anonymous_id = str(external_id.external_user_id)
+
+        ## CampusIL change
+        anonymous_id = anonymous_id_for_user(user, None, save=False)
 
     return anonymous_id
 
