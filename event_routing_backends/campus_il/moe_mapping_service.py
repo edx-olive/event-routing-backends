@@ -197,7 +197,7 @@ class MOEMapping():
                 _lang = self.__detect_language(_value)
                 _output[_lang] = _value
         
-        return _output
+        return _output 
     
     def __detect_language(self, text):
         _output = "en"
