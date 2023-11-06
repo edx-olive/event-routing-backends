@@ -42,6 +42,9 @@ class MOEMapping():
         "http://adlnet.gov/expapi/activities/course": "https://lxp.education.gov.il/xapi/moe/activities/course"
     }
     
+    # Default text value
+    default_text_value = 'No Text'
+    
     #%% Init section    
     
     def __init__(self):
@@ -51,7 +54,9 @@ class MOEMapping():
     
     def map_event(self, event=None, event_str = ''):
         event = json.loads(event_str) if event_str else event
-        #logging.info(f'qwer111 CampusIL event: {event}')
+        
+        # prepare event data
+        self.__prepare_event(event)
         
         _course_id = self.__get_course_block_id(event, IdsType.COURSE)
         _block_id = self.__get_course_block_id(event, IdsType.BLOCK)
@@ -129,15 +134,14 @@ class MOEMapping():
         if _instructorNode:
             external_event.setdefault("context", {})["instructor"] = _instructorNode
         
-        # Convert to JSON string
+        # map CampusIL events to MOE events
         external_event = self.__map_fields_data(external_event)
-
+        
         return external_event
     
     def is_relevant_event(self, verb_id):
         return verb_id in self.verb_mapping
- 
- 
+
     #%% Private section
     
     # map event's verb and object to MOE event verb and object
@@ -177,7 +181,9 @@ class MOEMapping():
                 _seconds = int(section.get(_extensions_section, {}).get(config.Get("MAPPING_EXTENSIONS_TIME"), 0))
                 _output[field_name] = self.__convert_seconds_to_hms(_seconds)
             elif field_type is FieldTypes.LANG and course_id and block_id:
-                _output[field_name] = { "en": self.__get_block_title(course_id, block_id) }
+                _value = self.__get_block_title(course_id, block_id).strip() or self.default_text_value
+                _key = self.__detect_language(_value)
+                _output[field_name] = { _key: _value }
         
         return _output
     
@@ -187,7 +193,27 @@ class MOEMapping():
         if type(value) is dict:
             for key in value:
                 _lang = key.split('-')[0]
-                _output[_lang] = value[key]
+                _value = str(value[key]).strip() or self.default_text_value
+                _lang = self.__detect_language(_value)
+                _output[_lang] = _value
+        
+        return _output
+    
+    def __detect_language(self, text):
+        _output = "en"
+        _cleaned_text = re.sub(r'[0-9\-\'"().,;:!?\[\]{}]', '', text).strip()
+        
+        # Check if all the characters are in the ASCII range
+        if all(ord(char) < 128 for char in _cleaned_text):
+            _output = "en"
+        # Check if it's possibly Hebrew by looking at the Unicode block
+        elif all('\u0590' <= char <= '\u05FF' or char.isspace() for char in _cleaned_text):
+            _output = "he"
+        # Check if it's possibly Arabic by looking at the Unicode block
+        elif all('\u0600' <= char <= '\u06FF' or char.isspace() for char in _cleaned_text):
+            _output = "ar"
+        elif all('\u0400' <= char <= '\u04FF' or char.isspace() for char in _cleaned_text):
+            _output = "ru"
         
         return _output
     
@@ -214,11 +240,8 @@ class MOEMapping():
         return duration_string
     
     def __get_intrsuctor_node(self, course_id):
-        #logging.info(f'qwer1 course_id: {course_id}')
         cache_key = f'{config.Get("MAPPING_CACHE_INSTRUCTOR_PREFIX")}_{course_id}'
-        #logging.info(f'qwer1 cache_key: {cache_key}')
         anonymous_id = cache.get(cache_key)
-        #logging.info(f'qwer1 loaded from cache anonymous_id: {anonymous_id}')
         
         if not anonymous_id:
             teacher_course_role = CourseAccessRole.objects.filter(
@@ -228,8 +251,6 @@ class MOEMapping():
                 user__email__endswith='campus.gov.il'
             ).first()
         
-            #logging.info(f"MOE: Teacher of CCX: {teacher_course_role}")
-        
             # get teacher's IDM
             if teacher_course_role:
                 social_auth = UserSocialAuth.objects.filter(user__id=teacher_course_role.user.id, provider='tpa-saml', uid__startswith='moe-edu-idm:').first()
@@ -237,7 +258,6 @@ class MOEMapping():
                 #logging.info(f"MOE: Teacher of CCX social_auth: {social_auth}")
                 if social_auth:
                     anonymous_id = social_auth.uid.split(':')[1]
-                    logging.info(f'qwer1 save to cache: key={cache_key}, value={anonymous_id}')
                     cache.add(cache_key, anonymous_id, int(config.Get("MAPPING_CACHE_EXPIRATION"))) #in seconds
         
         if anonymous_id:
@@ -279,17 +299,20 @@ class MOEMapping():
         return _output
     
     # get xblock title
-    def __get_block_title(self, course_key, usage_key):
+    def __get_block_title(self, course_key, usage_key) -> str:
         cache_key = f'{config.Get("MAPPING_CACHE_BLOCK_PREFIX")}_{usage_key}'
         block_title = cache.get(cache_key)
-        #logging.info(f'qwer1 using {cache_key} loaded from cache block_title: {block_title}')
         
         if not block_title:
             block_cache = XBlockCache.objects.filter(usage_key=usage_key).first()
             block_title = block_cache.display_name if block_cache else None
             cache.add(cache_key, block_title, int(config.Get("MAPPING_CACHE_EXPIRATION"))) #in seconds
-
-            #logging.info(f'qwer1 added to cache: key {cache_key}, value {block_title}')
             
         return block_title
     
+    # prepare event
+    def __prepare_event(self, event):
+        
+        # prepate the /course/ url of the input event
+        for parent in event.get("context", {}).get("contextActivities", {}).get("parent", []):
+            parent["id"] = parent.get("id").replace("/course/", "/courses/")

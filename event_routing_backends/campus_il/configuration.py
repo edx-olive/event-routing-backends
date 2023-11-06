@@ -6,7 +6,7 @@ from configparser import ConfigParser
 from enum import Enum
 import logging
 
-class Config():
+class Config(): 
 
     config: ConfigParser = ConfigParser()
     environment: Enum = None
